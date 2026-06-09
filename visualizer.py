@@ -9,13 +9,15 @@ class AudioVisualizer:
 
         # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
-        overlay_height = 150
+        overlay_height = 200  # Increased from 150 to prevent clipping
+        y_offset = 5  # Move down 5 pixels from top
 
         # Configure window - transparent overlay at top of screen
         self.root.overrideredirect(True)  # Remove window borders
         self.root.attributes('-topmost', True)  # Always on top
+        self.root.attributes('-alpha', 0.5)  # 50% transparency
         self.root.attributes('-transparentcolor', 'black')  # Make black transparent
-        self.root.geometry(f'{screen_width}x{overlay_height}+0+0')
+        self.root.geometry(f'{screen_width}x{overlay_height}+0+{y_offset}')
 
         # Create canvas
         self.canvas = tk.Canvas(
@@ -161,25 +163,81 @@ class AudioVisualizer:
                 else:
                     normalized = fft_useful
 
-                # Map frequencies to wave points using vectorized operations
-                indices = np.linspace(0, len(normalized) - 1, self.WAVE_POINTS, dtype=int)
-                resampled = normalized[indices]
+                # Custom frequency band distribution:
+                # Left 40%: 20-300 Hz (bass)
+                # Middle 40%: 300-2000 Hz (vocals/instruments)
+                # Right 20%: 2000-8000 Hz (highs)
+
+                # Calculate frequency per bin
+                freq_per_bin = (self.RATE / 2) / len(fft_magnitude)  # Hz per FFT bin
+
+                # Find bin indices for each frequency range
+                bin_20hz = max(1, int(20 / freq_per_bin))
+                bin_300hz = int(300 / freq_per_bin)
+                bin_2000hz = int(2000 / freq_per_bin)
+                bin_8000hz = min(len(normalized), int(8000 / freq_per_bin))
+
+                # Calculate how many wave points per section
+                left_points = int(self.WAVE_POINTS * 0.4)  # 40% for bass
+                mid_points = int(self.WAVE_POINTS * 0.4)   # 40% for mids
+                right_points = self.WAVE_POINTS - left_points - mid_points  # Remaining 20% for highs
+
+                # Sample from each frequency band
+                bass_band = normalized[bin_20hz:bin_300hz]
+                mid_band = normalized[bin_300hz:bin_2000hz]
+                high_band = normalized[bin_2000hz:bin_8000hz]
+
+                # Apply averaging to bass band to make it smoother and more wave-like
+                if len(bass_band) > 10:
+                    # Use moving average with larger window size to smooth bass frequencies
+                    window_size = 10  # Increased from 5 for smoother wave
+                    bass_band_smoothed = np.convolve(bass_band, np.ones(window_size)/window_size, mode='same')
+                else:
+                    bass_band_smoothed = bass_band
+
+                # Create indices for each band
+                bass_indices = np.linspace(0, len(bass_band_smoothed) - 1, left_points, dtype=int) if len(bass_band_smoothed) > 0 else []
+                mid_indices = np.linspace(0, len(mid_band) - 1, mid_points, dtype=int) if len(mid_band) > 0 else []
+                high_indices = np.linspace(0, len(high_band) - 1, right_points, dtype=int) if len(high_band) > 0 else []
+
+                # Sample and concatenate
+                resampled = np.concatenate([
+                    bass_band_smoothed[bass_indices] if len(bass_indices) > 0 else np.zeros(left_points),
+                    mid_band[mid_indices] if len(mid_indices) > 0 else np.zeros(mid_points),
+                    high_band[high_indices] if len(high_indices) > 0 else np.zeros(right_points)
+                ])
 
                 # Apply frequency-specific boosts using NumPy (much faster than loops)
-                bass_cutoff = int(self.WAVE_POINTS * 0.3)
-                mid_cutoff = int(self.WAVE_POINTS * 0.7)
+                bass_cutoff = int(self.WAVE_POINTS * 0.4)
+                mid_cutoff = int(self.WAVE_POINTS * 0.8)
 
-                resampled[:bass_cutoff] *= 1.3  # Bass boost
-                resampled[bass_cutoff:mid_cutoff] *= 1.5  # Mid boost (vocals/instruments)
-                resampled[mid_cutoff:] *= 1.8  # High boost (hi-hats/cymbals)
+                resampled[:bass_cutoff] *= 2.3  # Bass boost (left 40%)
+                resampled[bass_cutoff:mid_cutoff] *= 2.25  # Mid boost (middle 40%) - reduced by 0.25x
+                resampled[mid_cutoff:] *= 2.5  # High boost (right 20%)
 
-                # Smooth using vectorized NumPy operation (much faster than loop)
-                smoothing = 0.7
-                self.wave_data = [
-                    self.wave_data[i] * smoothing + resampled[i] * (1 - smoothing)
-                    if i < len(self.wave_data) else resampled[i]
-                    for i in range(len(resampled))
-                ]
+                # Apply variable smoothing - more smoothing for bass to reduce jitter
+                smoothing_left = 0.95   # Bass (left 40%) - extra heavy smoothing
+                smoothing_mid = 0.75    # Mids (middle 40%) - medium smoothing
+                smoothing_right = 0.7   # Highs (right 20%) - light smoothing
+
+                bass_cutoff = int(self.WAVE_POINTS * 0.4)
+                mid_cutoff = int(self.WAVE_POINTS * 0.8)
+
+                new_wave_data = []
+                for i in range(len(resampled)):
+                    if i < bass_cutoff:
+                        smoothing = smoothing_left
+                    elif i < mid_cutoff:
+                        smoothing = smoothing_mid
+                    else:
+                        smoothing = smoothing_right
+
+                    if i < len(self.wave_data):
+                        new_wave_data.append(self.wave_data[i] * smoothing + resampled[i] * (1 - smoothing))
+                    else:
+                        new_wave_data.append(resampled[i])
+
+                self.wave_data = new_wave_data
 
         # Draw wave
         self.draw_wave()
@@ -195,11 +253,13 @@ class AudioVisualizer:
             return
 
         # Vectorized point creation (faster than loop)
-        x_step = self.width / self.WAVE_POINTS
+        left_margin = 10  # Clip left side by 10 pixels
+        available_width = self.width - left_margin
+        x_step = available_width / self.WAVE_POINTS
         wave_array = np.array(self.wave_data)
 
-        # Create x and y coordinates
-        x_coords = np.arange(len(wave_array)) * x_step
+        # Create x and y coordinates with left margin
+        x_coords = (np.arange(len(wave_array)) * x_step) + left_margin
         y_coords = wave_array * (self.height * 0.8)
 
         # Interleave x and y for create_line (much faster than extending in loop)
