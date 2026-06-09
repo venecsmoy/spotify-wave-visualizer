@@ -30,7 +30,7 @@ class AudioVisualizer:
         # Audio settings
         self.CHUNK = 2048
         self.RATE = 44100
-        self.WAVE_POINTS = 300
+        self.WAVE_POINTS = 200  # Reduced from 300 for better performance
 
         # Visualization settings
         self.width = screen_width
@@ -161,30 +161,25 @@ class AudioVisualizer:
                 else:
                     normalized = fft_useful
 
-                # Map frequencies to wave points
-                # Each wave point represents a frequency band from low to high
-                resampled = []
-                for i in range(self.WAVE_POINTS):
-                    # Map wave point to frequency range
-                    # Left side (i=0) = low frequencies (bass/beats)
-                    # Right side (i=WAVE_POINTS-1) = high frequencies (vocals)
-                    freq_idx = int((i / self.WAVE_POINTS) * len(normalized))
-                    freq_idx = min(freq_idx, len(normalized) - 1)
+                # Map frequencies to wave points using vectorized operations
+                indices = np.linspace(0, len(normalized) - 1, self.WAVE_POINTS, dtype=int)
+                resampled = normalized[indices]
 
-                    # Get amplitude at this frequency
-                    amplitude = normalized[freq_idx]
+                # Apply frequency-specific boosts using NumPy (much faster than loops)
+                bass_cutoff = int(self.WAVE_POINTS * 0.3)
+                mid_cutoff = int(self.WAVE_POINTS * 0.7)
 
-                    # Boost low frequencies (bass) slightly for visual impact
-                    if i < self.WAVE_POINTS * 0.3:  # First 30% = bass range
-                        amplitude *= 1.3  # 30% boost for bass
+                resampled[:bass_cutoff] *= 1.3  # Bass boost
+                resampled[bass_cutoff:mid_cutoff] *= 1.5  # Mid boost (vocals/instruments)
+                resampled[mid_cutoff:] *= 1.8  # High boost (hi-hats/cymbals)
 
-                    resampled.append(amplitude)
-
-                # Smooth the data
+                # Smooth using vectorized NumPy operation (much faster than loop)
                 smoothing = 0.7
-                for i in range(len(resampled)):
-                    if i < len(self.wave_data):
-                        self.wave_data[i] = self.wave_data[i] * smoothing + resampled[i] * (1 - smoothing)
+                self.wave_data = [
+                    self.wave_data[i] * smoothing + resampled[i] * (1 - smoothing)
+                    if i < len(self.wave_data) else resampled[i]
+                    for i in range(len(resampled))
+                ]
 
         # Draw wave
         self.draw_wave()
@@ -199,31 +194,27 @@ class AudioVisualizer:
         if not self.wave_data:
             return
 
-        # Create wave points
-        points = []
+        # Vectorized point creation (faster than loop)
         x_step = self.width / self.WAVE_POINTS
+        wave_array = np.array(self.wave_data)
 
-        for i, amplitude in enumerate(self.wave_data):
-            x = i * x_step
-            # Scale amplitude (wave comes down from top)
-            y = amplitude * (self.height * 0.8)
-            points.append((x, y))
+        # Create x and y coordinates
+        x_coords = np.arange(len(wave_array)) * x_step
+        y_coords = wave_array * (self.height * 0.8)
 
-        # Draw smooth curve
-        if len(points) > 1:
-            # Create smooth line through points
-            smooth_points = []
-            for i in range(len(points)):
-                x, y = points[i]
-                smooth_points.extend([x, y])
+        # Interleave x and y for create_line (much faster than extending in loop)
+        smooth_points = np.empty(len(x_coords) * 2, dtype=np.float64)
+        smooth_points[0::2] = x_coords
+        smooth_points[1::2] = y_coords
 
-            # Draw the wave line
+        # Draw the wave line with reduced splinesteps for performance
+        if len(smooth_points) > 2:
             self.canvas.create_line(
-                smooth_points,
+                *smooth_points,
                 fill='white',
                 width=3,
                 smooth=True,
-                splinesteps=12
+                splinesteps=6  # Reduced from 12 for better performance
             )
 
     def quit(self):
