@@ -38,6 +38,7 @@ class AudioVisualizer:
         self.width = screen_width
         self.height = overlay_height
         self.wave_data = [0] * self.WAVE_POINTS
+        self.wave_velocity = np.zeros(self.WAVE_POINTS)  # For spring-damper motion
 
         # Audio queue
         self.audio_queue = queue.Queue()
@@ -136,12 +137,12 @@ class AudioVisualizer:
         # Silence threshold based on RMS
         SILENCE_RMS_THRESHOLD = 0.001  # Adjust if needed
 
-        if rms < SILENCE_RMS_THRESHOLD:
-            # True silence detected - fade to flat line
-            smoothing = 0.85
-            for i in range(len(self.wave_data)):
-                self.wave_data[i] = self.wave_data[i] * smoothing
-        else:
+        # Compute the target wave shape — zeros when silent, FFT-derived otherwise.
+        # Physics + spatial coupling run uniformly on the target each frame, so the
+        # silent path becomes a natural spring decay to zero.
+        target = np.zeros(self.WAVE_POINTS)
+
+        if rms >= SILENCE_RMS_THRESHOLD:
             # Music is playing - do FFT visualization
             fft_data = np.fft.fft(audio_data)
             fft_magnitude = np.abs(fft_data[:len(fft_data)//2])
@@ -212,32 +213,32 @@ class AudioVisualizer:
                 mid_cutoff = int(self.WAVE_POINTS * 0.8)
 
                 resampled[:bass_cutoff] *= 2.3  # Bass boost (left 40%)
-                resampled[bass_cutoff:mid_cutoff] *= 2.15  # Mid boost (middle 40%) - reduced by 0.10x
+                resampled[bass_cutoff:mid_cutoff] *= 2.15  # Mid boost (middle 40%)
                 resampled[mid_cutoff:] *= 2.5  # High boost (right 20%)
 
-                # Apply variable smoothing - more smoothing for bass to reduce jitter and buzzing
-                smoothing_left = 0.90   # Bass (left 40%) - heavy smoothing but lets bass pop through
-                smoothing_mid = 0.80    # Mids (middle 40%) - medium smoothing
-                smoothing_right = 0.75  # Highs (right 20%) - light smoothing
+                target = resampled
 
-                bass_cutoff = int(self.WAVE_POINTS * 0.4)
-                mid_cutoff = int(self.WAVE_POINTS * 0.8)
+        # Spring-damper physics: each point chases its target with momentum,
+        # producing sway on transients and graceful settle on sustained notes.
+        # Per-band tuning keeps bass slow/heavy and highs snappy.
+        bass_cutoff = int(self.WAVE_POINTS * 0.4)
+        mid_cutoff = int(self.WAVE_POINTS * 0.8)
 
-                new_wave_data = []
-                for i in range(len(resampled)):
-                    if i < bass_cutoff:
-                        smoothing = smoothing_left
-                    elif i < mid_cutoff:
-                        smoothing = smoothing_mid
-                    else:
-                        smoothing = smoothing_right
+        spring_k = np.empty(self.WAVE_POINTS)
+        damping = np.empty(self.WAVE_POINTS)
+        spring_k[:bass_cutoff], damping[:bass_cutoff] = 0.10, 0.78   # Bass: slow chase, smooth sway
+        spring_k[bass_cutoff:mid_cutoff], damping[bass_cutoff:mid_cutoff] = 0.16, 0.68  # Mids: balanced
+        spring_k[mid_cutoff:], damping[mid_cutoff:] = 0.22, 0.62     # Highs: fast chase, light damp
 
-                    if i < len(self.wave_data):
-                        new_wave_data.append(self.wave_data[i] * smoothing + resampled[i] * (1 - smoothing))
-                    else:
-                        new_wave_data.append(resampled[i])
+        positions = np.array(self.wave_data)
+        self.wave_velocity = self.wave_velocity * damping + (target - positions) * spring_k
+        positions = positions + self.wave_velocity
 
-                self.wave_data = new_wave_data
+        # Spatial coupling: adjacent points pull each other so the wave
+        # moves as a connected sheet rather than independent bars.
+        positions = np.convolve(positions, [0.25, 0.5, 0.25], mode='same')
+
+        self.wave_data = positions.tolist()
 
         # Draw wave
         self.draw_wave()

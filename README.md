@@ -86,7 +86,7 @@ Listen Mode → Your Headphones
 - **Overlay Height**: 250 px (full screen width)
 - **Update Rate**: ~60 FPS (16ms intervals)
 - **Frequency Range**: 0 Hz - 8.8 kHz (40% of FFT spectrum)
-- **Silence Threshold**: RMS < 0.001 (with 0.85 decay-to-flat per frame)
+- **Silence Threshold**: RMS < 0.001 (springs decay the wave to flat naturally)
 
 ### Frequency Distribution
 
@@ -94,13 +94,16 @@ Listen Mode → Your Headphones
 - **Middle 40%**: Vocals & instruments (300-2000 Hz) - 2.15x boost
 - **Right 20%**: Hi-hats, cymbals (2-8 kHz) - 2.5x boost
 
-### Adaptive Smoothing
+### Motion Model
 
-Each band uses a different smoothing coefficient (prior-frame retention) so bass stays stable while highs respond quickly:
+Each wave point is driven by a per-band **spring-damper** and lightly coupled to its neighbors, so the wave moves like a connected sheet with momentum rather than independent bars:
 
-- **Bass**: 0.90 — heavy smoothing to suppress low-frequency jitter while letting beats pop
-- **Mids**: 0.80 — moderate smoothing for vocals/instruments
-- **Highs**: 0.75 — light smoothing for snappy hi-hat / cymbal response
+- **Spring-damper** (per band): `velocity = velocity * damping + (target − position) * spring_k`, then `position += velocity`. Gives sway on transients and a natural settle on sustained notes.
+  - **Bass**: `spring_k = 0.10`, `damping = 0.78` — slow, heavy sway
+  - **Mids**: `spring_k = 0.16`, `damping = 0.68` — balanced motion
+  - **Highs**: `spring_k = 0.22`, `damping = 0.62` — snappy response
+- **Spatial coupling**: each frame, a `[0.25, 0.5, 0.25]` convolution across the wave so adjacent points pull on each other — removes per-bar jitter without adding visible lag.
+- **Silence**: target is zero, so the springs naturally decay the wave to a flat line.
 
 ## Troubleshooting
 
