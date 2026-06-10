@@ -9,7 +9,7 @@ class AudioVisualizer:
 
         # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
-        overlay_height = 200  # Increased from 150 to prevent clipping
+        overlay_height = 250  # Increased height for more space
         y_offset = 5  # Move down 5 pixels from top
 
         # Configure window - transparent overlay at top of screen
@@ -212,13 +212,13 @@ class AudioVisualizer:
                 mid_cutoff = int(self.WAVE_POINTS * 0.8)
 
                 resampled[:bass_cutoff] *= 2.3  # Bass boost (left 40%)
-                resampled[bass_cutoff:mid_cutoff] *= 2.25  # Mid boost (middle 40%) - reduced by 0.25x
+                resampled[bass_cutoff:mid_cutoff] *= 2.15  # Mid boost (middle 40%) - reduced by 0.10x
                 resampled[mid_cutoff:] *= 2.5  # High boost (right 20%)
 
-                # Apply variable smoothing - more smoothing for bass to reduce jitter
-                smoothing_left = 0.95   # Bass (left 40%) - extra heavy smoothing
-                smoothing_mid = 0.75    # Mids (middle 40%) - medium smoothing
-                smoothing_right = 0.7   # Highs (right 20%) - light smoothing
+                # Apply variable smoothing - more smoothing for bass to reduce jitter and buzzing
+                smoothing_left = 0.90   # Bass (left 40%) - heavy smoothing but lets bass pop through
+                smoothing_mid = 0.80    # Mids (middle 40%) - medium smoothing
+                smoothing_right = 0.75  # Highs (right 20%) - light smoothing
 
                 bass_cutoff = int(self.WAVE_POINTS * 0.4)
                 mid_cutoff = int(self.WAVE_POINTS * 0.8)
@@ -260,7 +260,8 @@ class AudioVisualizer:
 
         # Create x and y coordinates with left margin
         x_coords = (np.arange(len(wave_array)) * x_step) + left_margin
-        y_coords = wave_array * (self.height * 0.8)
+        # Keep wave size same as 200px height: 200 * 0.8 = 160
+        y_coords = wave_array * 160
 
         # Interleave x and y for create_line (much faster than extending in loop)
         smooth_points = np.empty(len(x_coords) * 2, dtype=np.float64)

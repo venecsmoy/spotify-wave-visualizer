@@ -82,16 +82,25 @@ Listen Mode → Your Headphones
 
 - **Sample Rate**: 44.1 kHz
 - **Chunk Size**: 2048 samples
-- **Wave Points**: 300 frequency bands
+- **Wave Points**: 200 frequency bands
+- **Overlay Height**: 250 px (full screen width)
 - **Update Rate**: ~60 FPS (16ms intervals)
 - **Frequency Range**: 0 Hz - 8.8 kHz (40% of FFT spectrum)
-- **Silence Threshold**: RMS < 0.001
+- **Silence Threshold**: RMS < 0.001 (with 0.85 decay-to-flat per frame)
 
 ### Frequency Distribution
 
-- **Left 30%**: Bass & kick drums (20-300 Hz) - 1.3x boost
-- **Middle 40%**: Vocals & instruments (300-2000 Hz)
-- **Right 30%**: Hi-hats, cymbals (2-8 kHz)
+- **Left 40%**: Bass & kick drums (20-300 Hz) - 2.3x boost
+- **Middle 40%**: Vocals & instruments (300-2000 Hz) - 2.15x boost
+- **Right 20%**: Hi-hats, cymbals (2-8 kHz) - 2.5x boost
+
+### Adaptive Smoothing
+
+Each band uses a different smoothing coefficient (prior-frame retention) so bass stays stable while highs respond quickly:
+
+- **Bass**: 0.90 — heavy smoothing to suppress low-frequency jitter while letting beats pop
+- **Mids**: 0.80 — moderate smoothing for vocals/instruments
+- **Highs**: 0.75 — light smoothing for snappy hi-hat / cymbal response
 
 ## Troubleshooting
 
